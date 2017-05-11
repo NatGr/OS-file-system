@@ -101,7 +101,7 @@ static int uniquefs_mknod(struct inode *dir, struct dentry *dentry, umode_t mode
 static int uniquefs_create(struct inode *dir, struct dentry *dentry, umode_t mode, bool excl)
 {
 	int error;
-	if (nbfiles >= MAX_NB_FILES){
+	if (nbfiles >= MAX_NB_FILES || !S_ISREG(mode)){
 		return -EPERM;
 	}
 	if (dentry->d_name.len > UNIQUEFS_NAME_MAX){
