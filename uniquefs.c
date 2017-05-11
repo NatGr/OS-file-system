@@ -1,4 +1,5 @@
 #include <linux/module.h>
+#include <linux/device.h>
 #include <linux/fs.h>
 #include <asm/uaccess.h>
 #include <linux/time.h>
@@ -8,6 +9,15 @@
 
 #define UNIQUEFS_DEFAULT_MODE	0755
 #define UNIQUEFS_NAME_MAX		32
+#define MAX_NB_FILES 			1
+
+MODULE_LICENSE("GPL");
+MODULE_DESCRIPTION("unique file system");
+MODULE_AUTHOR("Group 1");
+
+static int majorNumber;
+static struct class* uniquefs_class = NULL;
+static int nbfiles = 0;
 
 static const struct inode_operations uniquefs_dir_inode_operations;
 
@@ -90,10 +100,27 @@ static int uniquefs_mknod(struct inode *dir, struct dentry *dentry, umode_t mode
 
 static int uniquefs_create(struct inode *dir, struct dentry *dentry, umode_t mode, bool excl)
 {
-	if (dentry->d_name.len > UNIQUEFS_NAME_MAX){
-		return -ENOSPC;
+	int error;
+	if (nbfiles >= MAX_NB_FILES){
+		return -EPERM;
 	}
-	return uniquefs_mknod(dir, dentry, mode | S_IFREG, 0);
+	if (dentry->d_name.len > UNIQUEFS_NAME_MAX){
+		return -ENAMETOOLONG;
+	}
+	error = uniquefs_mknod(dir, dentry, mode | S_IFREG, 0);
+	if (error == 0){
+		++nbfiles;
+	}
+	return error;
+}
+
+static int uniquefs_unlink(struct inode *dir,struct dentry *dentry)
+{
+	int error = simple_unlink(dir, dentry);
+	if (error == 0){
+		--nbfiles;
+	}
+	return error;
 }
 
 static int uniquefs_rename(struct inode *old_dir, struct dentry *old_dentry, struct inode *new_dir, struct dentry *new_dentry)
@@ -107,7 +134,7 @@ static int uniquefs_rename(struct inode *old_dir, struct dentry *old_dentry, str
 static const struct inode_operations uniquefs_dir_inode_operations = {
 	.create		= uniquefs_create,
 	.lookup		= simple_lookup,
-	.unlink		= simple_unlink,
+	.unlink		= uniquefs_unlink,
 	.mknod		= uniquefs_mknod,
 	.rename		= uniquefs_rename,
 };
@@ -146,9 +173,21 @@ static struct file_system_type uniquefs_fs_type = {
 	.fs_flags = FS_USERNS_MOUNT, //From fs.h:1861 Allow user. Real FS backed by a device use FS_REQUIRES_DEV
 };
 
-int __init init_uniquefs_fs(void)
+int __init uniquefs_init(void)
 {
-	return register_filesystem(&uniquefs_fs_type);
+	majorNumber = register_filesystem(&uniquefs_fs_type);
+	uniquefs_class = class_create(THIS_MODULE, "uniquefs");
+	device_create(uniquefs_class, NULL, MKDEV(majorNumber, 0), NULL, "uniquefs");
+	return 0;
 }
 
-fs_initcall(init_uniquefs_fs);
+void __exit uniquefs_exit(void)
+{
+	device_destroy(uniquefs_class, MKDEV(majorNumber, 0));
+	class_unregister(uniquefs_class);
+    class_destroy(uniquefs_class);
+    unregister_filesystem(&uniquefs_fs_type);
+}
+
+module_init(uniquefs_init);
+module_exit(uniquefs_exit);
