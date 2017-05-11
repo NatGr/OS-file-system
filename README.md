@@ -4,4 +4,4 @@
 
 -vérfier dentry dans uniquefs_create et uniquefs_rename
 
--mettre license (on doit faire des major number et toute cette merde comme au tp en fait?)?
+-l'erreur renvoyée quand on a déjà 1 fichier c'est EPERM, y'a ptetre mieux
