@@ -25,34 +25,25 @@ static struct super_operations uniquefs_ops = {
 	.drop_inode	= generic_delete_inode,
 };
 
+static const struct address_space_operations uniquefs_aops = {
+	.readpage	= simple_readpage,
+	.write_begin	= simple_write_begin,
+	.write_end	= simple_write_end,
+};
+
 static const struct inode_operations uniquefs_file_inode_operations = {
 	.setattr = simple_setattr,
 	.getattr = simple_getattr,
 }; //For a virtual FS, this is sufficient
 
-
-static ssize_t uniquefs_read(struct file *file, char __user *buffer, size_t size, loff_t *offset)
-{
-	char* buf = "Hello\n";
-	size_t copied;
-	size_t buf_size = 7*sizeof(char) - *offset;
-
-	if (buf_size > size){
-		buf_size = size;
-	}
-	copied = buf_size - copy_to_user(buffer,buf + *offset,buf_size);
-	*offset += copied;
-	return copied;
-}
-	
-
-//ssize_t (*write) (struct file *, const char __user *, size_t, loff_t *);
-
-
 static const struct file_operations uniquefs_file_operations = {
-	.read = uniquefs_read
-	//.write = ...
-	//.mmap = ...
+	.read_iter	= generic_file_read_iter,
+	.write_iter	= generic_file_write_iter,
+	.mmap		= generic_file_mmap,
+	.fsync		= noop_fsync,
+	.splice_read	= generic_file_splice_read,
+	.splice_write	= iter_file_splice_write,
+	.llseek		= generic_file_llseek,
 };
 
 struct inode *uniquefs_get_inode(struct super_block *sb,
@@ -63,6 +54,7 @@ struct inode *uniquefs_get_inode(struct super_block *sb,
 	if (inode) {
 		inode->i_ino = get_next_ino();
 		inode_init_owner(inode, dir, mode);
+		inode->i_mapping->a_ops = &uniquefs_aops;
 		mapping_set_gfp_mask(inode->i_mapping, GFP_HIGHUSER);
 		mapping_set_unevictable(inode->i_mapping);
 		inode->i_atime = inode->i_mtime = inode->i_ctime = CURRENT_TIME;
