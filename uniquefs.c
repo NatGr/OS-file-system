@@ -6,6 +6,8 @@
 #include <linux/init.h>
 #include <linux/magic.h>
 #include <linux/pagemap.h>
+#include <linux/mm.h>
+
 
 #define UNIQUEFS_DEFAULT_MODE	0755
 #define UNIQUEFS_NAME_MAX		32
@@ -17,7 +19,7 @@ MODULE_AUTHOR("Group 1");
 
 static int majorNumber;
 static struct class* uniquefs_class = NULL;
-static int nbfiles = 0;
+static int nbfiles = 1; // is decremented at each mounting so that we can have several unique files in serveral mount locations
 
 static const struct inode_operations uniquefs_dir_inode_operations;
 
@@ -29,6 +31,7 @@ static const struct address_space_operations uniquefs_aops = {
 	.readpage	= simple_readpage,
 	.write_begin	= simple_write_begin,
 	.write_end	= simple_write_end,
+	.set_page_dirty	= __set_page_dirty_nobuffers,
 };
 
 static const struct inode_operations uniquefs_file_inode_operations = {
@@ -41,8 +44,6 @@ static const struct file_operations uniquefs_file_operations = {
 	.write_iter	= generic_file_write_iter,
 	.mmap		= generic_file_mmap,
 	.fsync		= noop_fsync,
-	.splice_read	= generic_file_splice_read,
-	.splice_write	= iter_file_splice_write,
 	.llseek		= generic_file_llseek,
 };
 
@@ -149,7 +150,11 @@ int uniquefs_fill_super(struct super_block *sb, void *data, int silent)
 
 struct dentry *uniquefs_mount(struct file_system_type *fs_type, int flags, const char *dev_name, void *data)
 {
-	return mount_nodev(fs_type, flags, data, uniquefs_fill_super);
+	struct dentry *err = mount_nodev(fs_type, flags, data, uniquefs_fill_super);
+	if (!IS_ERR_OR_NULL(err)){
+		--nbfiles;
+	}
+	return err;
 };
 
 static void uniquefs_kill_sb(struct super_block *sb)
