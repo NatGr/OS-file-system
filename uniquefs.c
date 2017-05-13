@@ -6,7 +6,7 @@
 #include <linux/init.h>
 #include <linux/magic.h>
 #include <linux/pagemap.h>
-#include <linux/mm.h>
+#include <linux/vmalloc.h>
 
 
 #define UNIQUEFS_DEFAULT_MODE	0755
@@ -17,8 +17,6 @@ MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("unique file system");
 MODULE_AUTHOR("Group 1");
 
-static int majorNumber;
-static struct class* uniquefs_class = NULL;
 static int nbfiles = 1; // is decremented at each mounting so that we can have several unique files in serveral mount locations
 
 static const struct inode_operations uniquefs_dir_inode_operations;
@@ -27,21 +25,39 @@ static struct super_operations uniquefs_ops = {
 	.drop_inode	= generic_delete_inode,
 };
 
-static const struct address_space_operations uniquefs_aops = {
-	.readpage	= simple_readpage,
-	.write_begin	= simple_write_begin,
-	.write_end	= simple_write_end,
-	.set_page_dirty	= __set_page_dirty_nobuffers,
-};
 
 static const struct inode_operations uniquefs_file_inode_operations = {
 	.setattr = simple_setattr,
 	.getattr = simple_getattr,
 }; //For a virtual FS, this is sufficient
 
+static ssize_t uniquefs_read(struct file *file, char __user *buffer, size_t size, loff_t *offset){
+	void* buf = file->f_inode->i_private;
+	size_t copied, buf_size  = 12 - *offset;
+
+	if (buf_size > size){
+		buf_size = size;
+	}
+	copied = buf_size - copy_to_user(buffer,buf + *offset,buf_size);
+	*offset += copied;
+	return copied;
+}
+
+static ssize_t uniquefs_write(struct file *file, const char __user *buffer, size_t  size, loff_t *offset){
+	void* buf = file->f_inode->i_private;
+	size_t copied, buf_size  = 12 - *offset;
+
+	if (buf_size > size){
+		buf_size = size;
+	}
+	copied = buf_size - copy_from_user(buf + *offset, buffer, buf_size);
+	*offset += copied;
+	return copied;
+}
+
 static const struct file_operations uniquefs_file_operations = {
-	.read_iter	= generic_file_read_iter,
-	.write_iter	= generic_file_write_iter,
+	.read 		= uniquefs_read,
+	.write 		= uniquefs_write,
 	.mmap		= generic_file_mmap,
 	.fsync		= noop_fsync,
 	.llseek		= generic_file_llseek,
@@ -55,9 +71,6 @@ struct inode *uniquefs_get_inode(struct super_block *sb,
 	if (inode) {
 		inode->i_ino = get_next_ino();
 		inode_init_owner(inode, dir, mode);
-		inode->i_mapping->a_ops = &uniquefs_aops;
-		mapping_set_gfp_mask(inode->i_mapping, GFP_HIGHUSER);
-		mapping_set_unevictable(inode->i_mapping);
 		inode->i_atime = inode->i_mtime = inode->i_ctime = CURRENT_TIME;
 		switch (mode & S_IFMT) {
 		default:
@@ -66,6 +79,7 @@ struct inode *uniquefs_get_inode(struct super_block *sb,
 		case S_IFREG:
 			inode->i_op = &uniquefs_file_inode_operations;
 			inode->i_fop = &uniquefs_file_operations;
+			inode->i_private = vmalloc(100);
 			break;
 		case S_IFDIR:
 			inode->i_op = &uniquefs_dir_inode_operations;
@@ -172,17 +186,11 @@ static struct file_system_type uniquefs_fs_type = {
 
 int __init uniquefs_init(void)
 {
-	majorNumber = register_filesystem(&uniquefs_fs_type);
-	uniquefs_class = class_create(THIS_MODULE, "uniquefs");
-	device_create(uniquefs_class, NULL, MKDEV(majorNumber, 0), NULL, "uniquefs");
-	return 0;
+	return register_filesystem(&uniquefs_fs_type);
 }
 
 void __exit uniquefs_exit(void)
 {
-	device_destroy(uniquefs_class, MKDEV(majorNumber, 0));
-	class_unregister(uniquefs_class);
-    class_destroy(uniquefs_class);
     unregister_filesystem(&uniquefs_fs_type);
 }
 
