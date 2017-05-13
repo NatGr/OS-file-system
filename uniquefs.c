@@ -163,11 +163,7 @@ int uniquefs_fill_super(struct super_block *sb, void *data, int silent)
 
 struct dentry *uniquefs_mount(struct file_system_type *fs_type, int flags, const char *dev_name, void *data)
 {
-	struct dentry *err = mount_nodev(fs_type, flags, data, uniquefs_fill_super);
-	if (!IS_ERR_OR_NULL(err)){
-		--nbfiles;
-	}
-	return err;
+	return mount_nodev(fs_type, flags, data, uniquefs_fill_super);
 };
 
 static void uniquefs_kill_sb(struct super_block *sb)
