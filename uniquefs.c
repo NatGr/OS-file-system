@@ -17,8 +17,6 @@ MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("unique file system");
 MODULE_AUTHOR("Group 1");
 
-static int nbfiles = 1; // is decremented at each mounting so that we can have several unique files in serveral mount locations
-
 static const struct inode_operations uniquefs_dir_inode_operations;
 
 static struct super_operations uniquefs_ops = {
@@ -84,6 +82,7 @@ struct inode *uniquefs_get_inode(struct super_block *sb,
 		case S_IFDIR:
 			inode->i_op = &uniquefs_dir_inode_operations;
 			inode->i_fop = &simple_dir_operations; //Generic dir
+			inode->i_private = 0;
 			break;
 		}
 	}
@@ -108,7 +107,7 @@ static int uniquefs_mknod(struct inode *dir, struct dentry *dentry, umode_t mode
 static int uniquefs_create(struct inode *dir, struct dentry *dentry, umode_t mode, bool excl)
 {
 	int error;
-	if (nbfiles >= MAX_NB_FILES || !S_ISREG(mode)){
+	if (((int) (dir->i_private)) >= MAX_NB_FILES || !S_ISREG(mode)){
 		return -EPERM;
 	}
 	if (dentry->d_name.len > UNIQUEFS_NAME_MAX){
@@ -116,7 +115,7 @@ static int uniquefs_create(struct inode *dir, struct dentry *dentry, umode_t mod
 	}
 	error = uniquefs_mknod(dir, dentry, mode | S_IFREG, 0);
 	if (error == 0){
-		++nbfiles;
+		++(dir->i_private);
 	}
 	return error;
 }
@@ -125,7 +124,7 @@ static int uniquefs_unlink(struct inode *dir,struct dentry *dentry)
 {
 	int error = simple_unlink(dir, dentry);
 	if (error == 0){
-		--nbfiles;
+		--(dir->i_private);
 	}
 	return error;
 }
