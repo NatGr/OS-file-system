@@ -43,6 +43,49 @@ static bool grow(struct file_data *file_data, loff_t newsize, loff_t to_copy){
 	return true;
 }
 
+static int uniquefs_filemap_fault(struct vm_area_struct * vma, struct vm_fault *vmf) {
+	struct file* file = vma->vm_file;
+	struct file_data * fd;
+	unsigned long offset;
+	struct page* page;
+	if (!file) {
+		return VM_FAULT_ERROR;
+	}
+	fd = file->f_inode->i_private;
+	inode_lock(file->f_inode);
+	offset = vma->vm_pgoff * PAGE_SIZE;
+	if (offset >= fd->used) {
+		inode_unlock(file->f_inode);
+		return VM_FAULT_ERROR;
+	}
+	page = vmalloc_to_page(fd->data + offset);
+	vmf->page = page;
+	inode_unlock(file->f_inode);
+	return 0;
+}
+
+static const struct vm_operations_struct uniquefs_file_vm_ops = {
+	.fault		= uniquefs_filemap_fault,
+	.map_pages	= filemap_map_pages,
+	.page_mkwrite	= filemap_page_mkwrite,
+};
+
+static const struct address_space_operations uniquefs_aops = {
+	.readpage	= simple_readpage,
+	.write_begin	= simple_write_begin,
+	.write_end	= simple_write_end,
+};
+
+int uniquefs_file_mmap(struct file * file, struct vm_area_struct * vma) {
+        struct address_space *mapping = file->f_mapping;
+
+        if (!mapping->a_ops->readpage)
+                return -ENOEXEC;
+        file_accessed(file);
+        vma->vm_ops = &uniquefs_file_vm_ops;
+        return 0;
+}
+
 static const struct inode_operations uniquefs_dir_inode_operations;
 
 static struct super_operations uniquefs_ops = {
@@ -94,7 +137,7 @@ static ssize_t uniquefs_write(struct file *file, const char __user *from, size_t
 static const struct file_operations uniquefs_file_operations = {
 	.read 		= uniquefs_read,
 	.write 		= uniquefs_write,
-	.mmap		= generic_file_mmap,
+	.mmap		= uniquefs_file_mmap,
 	.fsync		= noop_fsync,
 	.llseek		= generic_file_llseek,
 };
@@ -114,6 +157,7 @@ struct inode *uniquefs_get_inode(struct super_block *sb,
 			init_special_inode(inode, mode, dev);
 			break;
 		case S_IFREG:
+			inode->i_mapping->a_ops = &uniquefs_aops;
 			inode->i_op = &uniquefs_file_inode_operations;
 			inode->i_fop = &uniquefs_file_operations;
 			inode->i_private = vmalloc(sizeof(struct file_data));
