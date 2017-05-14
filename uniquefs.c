@@ -42,7 +42,6 @@ static bool grow(struct file_data *file_data){
 static int uniquefs_filemap_fault(struct vm_area_struct * vma, struct vm_fault *vmf) {
 	struct file* file = vma->vm_file;
 	struct file_data * fd;
-	unsigned long offset;
 	struct page* page;
 	int i;
 	if (!file) {
