@@ -125,7 +125,7 @@ struct inode *uniquefs_get_inode(struct super_block *sb,
 			inode->i_size = 0; // probably already done somewhere else
 			tmp->size = PAGE_CACHE_SIZE;
 			tmp->data = vmalloc(tmp->size);
-			if (inode->i_private == NULL){
+			if (tmp->data == NULL){
 				vfree(inode->i_private);
 				drop_nlink(inode);
 				return NULL;
