@@ -54,7 +54,7 @@ static int uniquefs_filemap_fault(struct vm_area_struct * vma, struct vm_fault *
 	fd = file->f_inode->i_private;
 	inode_lock(file->f_inode);
 	offset = vma->vm_pgoff * PAGE_SIZE;
-	if (offset >= fd->used) {
+	if (offset >= file->f_inode->i_size) {
 		inode_unlock(file->f_inode);
 		return VM_FAULT_ERROR;
 	}
