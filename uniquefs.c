@@ -78,6 +78,7 @@ static ssize_t uniquefs_write(struct file *file, const char __user *from, size_t
 	buf_max_size  = file_data->size - *offset;
 	if (size > buf_max_size){
 		if (!grow(file_data, size + *offset)){
+			inode_unlock(file->f_inode);
 			return -ENOMEM;
 		}
 	}
