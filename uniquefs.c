@@ -23,19 +23,24 @@ struct file_data{
 	char *data;
 };
 
-static struct file_data* resize(struct file_data *old){
-	size_t i = 0;
-	struct file_data *new;
-	new = vmalloc(sizeof(struct file_data));
-	new->used = old->used;
-	new->size = 2* old->size;
-	new->data = vmalloc(new->size);
-	for(; i<old->used; ++i){
-		new->data[i] = old->data[i];
+// resize to data field of file_data to something bigger or equal than newsize
+// return false if the reallocation was impossible and true otherwise
+static bool grow(struct file_data *file_data, size_t newsize){
+	size_t i = 0, k = 2;
+	char *tmp;
+
+	for(; k * (file_data->size) < newsize; ++k){}
+	tmp = vmalloc(k * (file_data->size));
+	if (tmp == NULL){
+		return false;
 	}
-	vfree(old->data);
-	vfree(old);
-	return new;
+	file_data->size = k * (file_data->size);
+	for(; i<file_data->used; ++i){
+		tmp[i] = file_data->data[i];
+	}
+	vfree(file_data->data);
+	file_data->data = tmp;
+	return true;
 }
 
 static const struct inode_operations uniquefs_dir_inode_operations;
@@ -71,10 +76,10 @@ static ssize_t uniquefs_write(struct file *file, const char __user *from, size_t
 
 	inode_lock(file->f_inode);
 	buf_max_size  = file_data->size - *offset;
-	while (size > buf_max_size){
-		file->f_inode->i_private = resize(file_data);
-		file_data = file->f_inode->i_private;
-		buf_max_size  = file_data->size - *offset;
+	if (size > buf_max_size){
+		if (!grow(file_data, size + *offset)){
+			return -ENOMEM;
+		}
 	}
 	copied = size - copy_from_user(file_data->data + *offset, from, size);
 	*offset += copied;
@@ -111,10 +116,19 @@ struct inode *uniquefs_get_inode(struct super_block *sb,
 			inode->i_op = &uniquefs_file_inode_operations;
 			inode->i_fop = &uniquefs_file_operations;
 			inode->i_private = vmalloc(sizeof(struct file_data));
+			if (inode->i_private == NULL){
+				drop_nlink(inode);
+				return NULL;
+			}
 			tmp = inode->i_private;
 			tmp->used = 0;
 			tmp->size = PAGE_CACHE_SIZE;
 			tmp->data = vmalloc(tmp->size);
+			if (inode->i_private == NULL){
+				vfree(inode->i_private);
+				drop_nlink(inode);
+				return NULL;
+			}
 			break;
 		case S_IFDIR:
 			inode->i_op = &uniquefs_dir_inode_operations;
