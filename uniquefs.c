@@ -239,9 +239,18 @@ static int uniquefs_create(struct inode *dir, struct dentry *dentry, umode_t mod
 
 static int uniquefs_unlink(struct inode *dir,struct dentry *dentry)
 {
-	struct file_data* tmp = dentry->d_inode->i_private;
-	vfree(tmp->data);
-	vfree(tmp);
+	struct file_data* last;
+	struct file_data* base = dentry->d_inode->i_private;
+	while(base->next != NULL){ //O(n²) but n is small so it's not a problem
+		last = base->next;
+		while(last->next != NULL){
+			last = last->next;
+		}
+		vfree(last->data);
+		vfree(last);
+	}
+	vfree(base->data);
+	vfree(base);
 	--(dir->i_private);
 	return simple_unlink(dir, dentry);
 }
