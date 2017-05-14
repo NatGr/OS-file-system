@@ -59,6 +59,7 @@ static int uniquefs_filemap_fault(struct vm_area_struct * vma, struct vm_fault *
 		return VM_FAULT_ERROR;
 	}
 	page = vmalloc_to_page(fd->data + offset);
+	get_page(page);
 	vmf->page = page;
 	inode_unlock(file->f_inode);
 	return 0;
