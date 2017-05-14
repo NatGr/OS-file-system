@@ -51,13 +51,15 @@ static int uniquefs_filemap_fault(struct vm_area_struct * vma, struct vm_fault *
 	if (!file) {
 		return VM_FAULT_ERROR;
 	}
-	fd = file->f_inode->i_private;
 	inode_lock(file->f_inode);
-	offset = vma->vm_pgoff * PAGE_SIZE;
-	if (offset >= file->f_inode->i_size) {
-		inode_unlock(file->f_inode);
-		return VM_FAULT_ERROR;
+	fd = file->f_inode->i_private;
+	for (int i = 0; i < vm_pgoff; fd = fd->next, i++) {
+		if (fd->next == NULL) {
+			inode_unlock(file->f_inode);
+			return VM_FAULT_ERROR;
+		}
 	}
+
 	page = vmalloc_to_page(fd->data + offset);
 	get_page(page);
 	vmf->page = page;
