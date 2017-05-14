@@ -17,6 +17,27 @@ MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("unique file system");
 MODULE_AUTHOR("Group 1");
 
+struct file_data{
+	size_t used;
+	size_t size;
+	char *data;
+};
+
+static struct file_data* resize(struct file_data *old){
+	size_t i = 0;
+	struct file_data *new;
+	new = vmalloc(sizeof(struct file_data));
+	new->used = old->used;
+	new->size = 2* old->size;
+	new->data = vmalloc(new->size);
+	for(; i<old->used; ++i){
+		new->data[i] = old->data[i];
+	}
+	vfree(old->data);
+	vfree(old);
+	return new;
+}
+
 static const struct inode_operations uniquefs_dir_inode_operations;
 
 static struct super_operations uniquefs_ops = {
@@ -29,27 +50,38 @@ static const struct inode_operations uniquefs_file_inode_operations = {
 	.getattr = simple_getattr,
 }; //For a virtual FS, this is sufficient
 
-static ssize_t uniquefs_read(struct file *file, char __user *buffer, size_t size, loff_t *offset){
-	void* buf = file->f_inode->i_private;
-	size_t copied, buf_size  = 12 - *offset;
+static ssize_t uniquefs_read(struct file *file, char __user *to, size_t size, loff_t *offset){
+	struct file_data* file_data = file->f_inode->i_private;
+	size_t copied, buf_size;
 
-	if (buf_size > size){
-		buf_size = size;
+	inode_lock(file->f_inode);
+	buf_size  = file_data->used - *offset;
+	if (size > buf_size){
+		size = buf_size;
 	}
-	copied = buf_size - copy_to_user(buffer,buf + *offset,buf_size);
+	copied = size - copy_to_user(to,file_data->data + *offset,size);
 	*offset += copied;
+	inode_unlock(file->f_inode);
 	return copied;
 }
 
-static ssize_t uniquefs_write(struct file *file, const char __user *buffer, size_t  size, loff_t *offset){
-	void* buf = file->f_inode->i_private;
-	size_t copied, buf_size  = 12 - *offset;
+static ssize_t uniquefs_write(struct file *file, const char __user *from, size_t  size, loff_t *offset){
+	struct file_data* file_data = file->f_inode->i_private;
+	size_t copied, buf_max_size;
 
-	if (buf_size > size){
-		buf_size = size;
+	inode_lock(file->f_inode);
+	buf_max_size  = file_data->size - *offset;
+	while (size > buf_max_size){
+		file->f_inode->i_private = resize(file_data);
+		file_data = file->f_inode->i_private;
+		buf_max_size  = file_data->size - *offset;
 	}
-	copied = buf_size - copy_from_user(buf + *offset, buffer, buf_size);
+	copied = size - copy_from_user(file_data->data + *offset, from, size);
 	*offset += copied;
+	if(file_data->used < *offset){
+		file_data->used = *offset;
+	}
+	inode_unlock(file->f_inode);
 	return copied;
 }
 
@@ -65,6 +97,7 @@ struct inode *uniquefs_get_inode(struct super_block *sb,
 				const struct inode *dir, umode_t mode, dev_t dev)
 {
 	struct inode * inode = new_inode(sb);
+	struct file_data *tmp;
 
 	if (inode) {
 		inode->i_ino = get_next_ino();
@@ -77,7 +110,11 @@ struct inode *uniquefs_get_inode(struct super_block *sb,
 		case S_IFREG:
 			inode->i_op = &uniquefs_file_inode_operations;
 			inode->i_fop = &uniquefs_file_operations;
-			inode->i_private = vmalloc(100);
+			inode->i_private = vmalloc(sizeof(struct file_data));
+			tmp = inode->i_private;
+			tmp->used = 0;
+			tmp->size = PAGE_CACHE_SIZE;
+			tmp->data = vmalloc(tmp->size);
 			break;
 		case S_IFDIR:
 			inode->i_op = &uniquefs_dir_inode_operations;
@@ -122,11 +159,11 @@ static int uniquefs_create(struct inode *dir, struct dentry *dentry, umode_t mod
 
 static int uniquefs_unlink(struct inode *dir,struct dentry *dentry)
 {
-	int error = simple_unlink(dir, dentry);
-	if (error == 0){
-		--(dir->i_private);
-	}
-	return error;
+	struct file_data* tmp = dentry->d_inode->i_private;
+	vfree(tmp->data);
+	vfree(tmp);
+	--(dir->i_private);
+	return simple_unlink(dir, dentry);
 }
 
 static int uniquefs_rename(struct inode *old_dir, struct dentry *old_dentry, struct inode *new_dir, struct dentry *new_dentry)
@@ -155,9 +192,9 @@ int uniquefs_fill_super(struct super_block *sb, void *data, int silent)
 	sb->s_op = &uniquefs_ops;
 	inode = uniquefs_get_inode(sb, NULL, S_IFDIR | UNIQUEFS_DEFAULT_MODE, 0);
 	sb->s_root = d_make_root(inode);
-	if (!sb->s_root)
+	if (!sb->s_root){
 		return -ENOMEM;
-
+	}
 	return 0;
 }
 
@@ -166,16 +203,11 @@ struct dentry *uniquefs_mount(struct file_system_type *fs_type, int flags, const
 	return mount_nodev(fs_type, flags, data, uniquefs_fill_super);
 };
 
-static void uniquefs_kill_sb(struct super_block *sb)
-{
-	kill_litter_super(sb);
-}
-
 static struct file_system_type uniquefs_fs_type = {
 	.owner = THIS_MODULE,
 	.name = "uniquefs",
 	.mount = uniquefs_mount, //To implement, mount a device to a location. This function return a "dentry", a directory. The root directory.
-	.kill_sb = uniquefs_kill_sb,
+	.kill_sb = kill_litter_super,
 	.fs_flags = FS_USERNS_MOUNT, //From fs.h:1861 Allow user. Real FS backed by a device use FS_REQUIRES_DEV
 };
 
