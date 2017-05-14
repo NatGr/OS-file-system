@@ -124,9 +124,6 @@ static ssize_t uniquefs_read(struct file *file, char __user *to, size_t size, lo
 static ssize_t uniquefs_write(struct file *file, const char __user *from, size_t  size, loff_t *offset){
 	struct file_data* file_data = file->f_inode->i_private;
 	ssize_t copied;
-
-	struct file_data* file_data = file->f_inode->i_private;
-	ssize_t copied, max_index;
 	size_t page_offset, mod_offset;
 
 	inode_lock(file->f_inode);
@@ -135,7 +132,7 @@ static ssize_t uniquefs_write(struct file *file, const char __user *from, size_t
 	for(; file_data->next != NULL && page_offset != 0; file_data = file_data->next){
 		--page_offset;
 	}
-	if (mod_offset = 0 && page_offset != 0){ // alloc a new page
+	if (mod_offset == 0 && page_offset != 0){ // alloc a new page
 		if(!grow(file_data)){
 			inode_unlock(file->f_inode);
 			return -ENOMEM;
