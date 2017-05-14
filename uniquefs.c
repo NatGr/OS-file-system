@@ -25,13 +25,13 @@ struct file_data{
 // allow a new file_data elemnt at the end of the linked list
 // returns false if the vmalloc failed and true otherwise
 static bool grow(struct file_data *file_data){
-	for(; file_data->next != NULL; file_data->file_data->next){}
+	for(; file_data->next != NULL; file_data = file_data->next){}
 
 	file_data->next = vmalloc(sizeof(file_data));
-	if (tmp == NULL){
+	if (file_data->next == NULL){
 		return false;
 	}
-	file_data->next->data = vmalloc(PAGE_CACHE_SIZE);
+	file_data->next->data = vmalloc(PAGE_SIZE);
 	if (file_data->next->data == NULL){
 		vfree(file_data->next);
 		return false;
@@ -44,6 +44,7 @@ static int uniquefs_filemap_fault(struct vm_area_struct * vma, struct vm_fault *
 	struct file_data * fd;
 	unsigned long offset;
 	struct page* page;
+	int i;
 	if (!file) {
 		return VM_FAULT_ERROR;
 	}
@@ -51,14 +52,14 @@ static int uniquefs_filemap_fault(struct vm_area_struct * vma, struct vm_fault *
 	inode_lock(file->f_inode);
 	
 	fd = file->f_inode->i_private;
-	for (int i = 0; i < vm_pgoff; fd = fd->next, i++) {
+	for (i = 0; i < vma->vm_pgoff; fd = fd->next, i++) {
 		if (fd->next == NULL) {
 			inode_unlock(file->f_inode);
 			return VM_FAULT_ERROR;
 		}
 	}
 
-	page = vmalloc_to_page(fd->data + offset);
+	page = vmalloc_to_page(fd->data);
 	get_page(page);
 	vmf->page = page;
 	inode_unlock(file->f_inode);
@@ -105,9 +106,9 @@ static ssize_t uniquefs_read(struct file *file, char __user *to, size_t size, lo
 	size_t page_offset, mod_offset;
 
 	inode_lock(file->f_inode);
-	page_offset = *offset / PAGE_CACHE_SIZE;
-	mod_offset = *offset % PAGE_CACHE_SIZE;
-	for(; file_data->next != NULL && page_offset != 0; file_data->file_data->next){
+	page_offset = *offset / PAGE_SIZE;
+	mod_offset = *offset % PAGE_SIZE;
+	for(; file_data->next != NULL && page_offset != 0; file_data = file_data->next){
 		--page_offset;
 	}
 	
@@ -129,9 +130,9 @@ static ssize_t uniquefs_write(struct file *file, const char __user *from, size_t
 	size_t page_offset, mod_offset;
 
 	inode_lock(file->f_inode);
-	page_offset = *offset / PAGE_CACHE_SIZE;
-	mod_offset = *offset % PAGE_CACHE_SIZE;
-	for(; file_data->next != NULL && page_offset != 0; file_data->file_data->next){
+	page_offset = *offset / PAGE_SIZE;
+	mod_offset = *offset % PAGE_SIZE;
+	for(; file_data->next != NULL && page_offset != 0; file_data = file_data->next){
 		--page_offset;
 	}
 	if (mod_offset = 0 && page_offset != 0){ // alloc a new page
@@ -142,8 +143,8 @@ static ssize_t uniquefs_write(struct file *file, const char __user *from, size_t
 		file_data = file_data->next;
 	}
 
-	if (mod_offset + size > PAGE_CACHE_SIZE){
-		size = PAGE_CACHE_SIZE - mod_offset;
+	if (mod_offset + size > PAGE_SIZE){
+		size = PAGE_SIZE - mod_offset;
 	}
 
 	copied = size - copy_from_user(file_data->data + mod_offset, from, size);
