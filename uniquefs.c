@@ -115,6 +115,9 @@ static ssize_t uniquefs_read(struct file *file, char __user *to, size_t size, lo
 	if (*offset + size > file->f_inode->i_size){
 		size = file->f_inode->i_size - *offset;
 	}
+	if (mod_offset + size > PAGE_SIZE){
+		size = PAGE_SIZE - mod_offset;
+	}
 	copied = size - copy_to_user(to,file_data->data + *offset,size);
 	*offset += copied;
 	inode_unlock(file->f_inode);
@@ -187,7 +190,7 @@ struct inode *uniquefs_get_inode(struct super_block *sb,
 			tmp = inode->i_private;
 			inode->i_size = 0; // probably already done somewhere else
 			tmp->next = NULL;
-			tmp->data = vmalloc(PAGE_CACHE_SIZE);
+			tmp->data = vmalloc(PAGE_SIZE);
 			if (tmp->data == NULL){
 				vfree(inode->i_private);
 				drop_nlink(inode);
