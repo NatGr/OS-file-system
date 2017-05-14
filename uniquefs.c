@@ -18,28 +18,24 @@ MODULE_DESCRIPTION("unique file system");
 MODULE_AUTHOR("Group 1");
 
 struct file_data{
-	loff_t size;
+	struct file_data *next;
 	char *data;
 };
 
-// resize to data field of file_data to something bigger or equal than newsize
-// only copying the data up to the offset to_copy
-// return false if the reallocation was impossible and true otherwise
-static bool grow(struct file_data *file_data, loff_t newsize, loff_t to_copy){
-	size_t i = 0, k = 2;
-	char *tmp;
+// allow a new file_data elemnt at the end of the linked list
+// returns false if the vmalloc failed and true otherwise
+static bool grow(struct file_data *file_data){
+	for(; file_data->next != NULL; file_data->file_data->next){}
 
-	for(; k * (file_data->size) < newsize; ++k){}
-	tmp = vmalloc(k * (file_data->size));
+	file_data->next = vmalloc(sizeof(file_data));
 	if (tmp == NULL){
 		return false;
 	}
-	file_data->size = k * (file_data->size);
-	for(; i < to_copy; ++i){
-		tmp[i] = file_data->data[i];
+	file_data->next->data = vmalloc(PAGE_CACHE_SIZE);
+	if (file_data->next->data == NULL){
+		vfree(file_data->next);
+		return false;
 	}
-	vfree(file_data->data);
-	file_data->data = tmp;
 	return true;
 }
 
@@ -51,15 +47,13 @@ static int uniquefs_filemap_fault(struct vm_area_struct * vma, struct vm_fault *
 	if (!file) {
 		return VM_FAULT_ERROR;
 	}
-	inode_lock(file->f_inode);
 	fd = file->f_inode->i_private;
-	for (int i = 0; i < vm_pgoff; fd = fd->next, i++) {
-		if (fd->next == NULL) {
-			inode_unlock(file->f_inode);
-			return VM_FAULT_ERROR;
-		}
+	inode_lock(file->f_inode);
+	offset = vma->vm_pgoff * PAGE_SIZE;
+	if (offset >= file->f_inode->i_size) {
+		inode_unlock(file->f_inode);
+		return VM_FAULT_ERROR;
 	}
-
 	page = vmalloc_to_page(fd->data + offset);
 	get_page(page);
 	vmf->page = page;
@@ -103,12 +97,18 @@ static const struct inode_operations uniquefs_file_inode_operations = {
 
 static ssize_t uniquefs_read(struct file *file, char __user *to, size_t size, loff_t *offset){
 	struct file_data* file_data = file->f_inode->i_private;
-	ssize_t copied, buf_size;
+	ssize_t copied;
+	size_t page_offset, mod_offset;
 
 	inode_lock(file->f_inode);
-	buf_size  = file->f_inode->i_size - *offset;
-	if (size > buf_size){
-		size = buf_size;
+	page_offset = *offset / PAGE_CACHE_SIZE;
+	mod_offset = *offset % PAGE_CACHE_SIZE;
+	for(; file_data->next != NULL && page_offset != 0; file_data->file_data->next){
+		--page_offset;
+	}
+	
+	if (*offset + size > file->f_inode->i_size){
+		size = file->f_inode->i_size - *offset;
 	}
 	copied = size - copy_to_user(to,file_data->data + *offset,size);
 	*offset += copied;
@@ -118,17 +118,31 @@ static ssize_t uniquefs_read(struct file *file, char __user *to, size_t size, lo
 
 static ssize_t uniquefs_write(struct file *file, const char __user *from, size_t  size, loff_t *offset){
 	struct file_data* file_data = file->f_inode->i_private;
-	ssize_t copied, buf_max_size;
+	ssize_t copied;
+
+	struct file_data* file_data = file->f_inode->i_private;
+	ssize_t copied, max_index;
+	size_t page_offset, mod_offset;
 
 	inode_lock(file->f_inode);
-	buf_max_size  = file_data->size - *offset;
-	if (size > buf_max_size){
-		if (!grow(file_data, size + *offset, file->f_inode->i_size)){
+	page_offset = *offset / PAGE_CACHE_SIZE;
+	mod_offset = *offset % PAGE_CACHE_SIZE;
+	for(; file_data->next != NULL && page_offset != 0; file_data->file_data->next){
+		--page_offset;
+	}
+	if (mod_offset = 0 && page_offset != 0){ // alloc a new page
+		if(!grow(file_data)){
 			inode_unlock(file->f_inode);
 			return -ENOMEM;
 		}
+		file_data = file_data->next;
 	}
-	copied = size - copy_from_user(file_data->data + *offset, from, size);
+
+	if (mod_offset + size > PAGE_CACHE_SIZE){
+		size = PAGE_CACHE_SIZE - mod_offset;
+	}
+
+	copied = size - copy_from_user(file_data->data + mod_offset, from, size);
 	*offset += copied;
 	if(file->f_inode->i_size < *offset){
 		file->f_inode->i_size = *offset;
@@ -170,8 +184,8 @@ struct inode *uniquefs_get_inode(struct super_block *sb,
 			}
 			tmp = inode->i_private;
 			inode->i_size = 0; // probably already done somewhere else
-			tmp->size = PAGE_CACHE_SIZE;
-			tmp->data = vmalloc(tmp->size);
+			tmp->next = NULL;
+			tmp->data = vmalloc(PAGE_CACHE_SIZE);
 			if (tmp->data == NULL){
 				vfree(inode->i_private);
 				drop_nlink(inode);
