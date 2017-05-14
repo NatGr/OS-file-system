@@ -18,14 +18,14 @@ MODULE_DESCRIPTION("unique file system");
 MODULE_AUTHOR("Group 1");
 
 struct file_data{
-	size_t used;
-	size_t size;
+	loff_t size;
 	char *data;
 };
 
 // resize to data field of file_data to something bigger or equal than newsize
+// only copying the data up to the offset to_copy
 // return false if the reallocation was impossible and true otherwise
-static bool grow(struct file_data *file_data, size_t newsize){
+static bool grow(struct file_data *file_data, loff_t newsize, loff_t to_copy){
 	size_t i = 0, k = 2;
 	char *tmp;
 
@@ -35,7 +35,7 @@ static bool grow(struct file_data *file_data, size_t newsize){
 		return false;
 	}
 	file_data->size = k * (file_data->size);
-	for(; i<file_data->used; ++i){
+	for(; i < to_copy; ++i){
 		tmp[i] = file_data->data[i];
 	}
 	vfree(file_data->data);
@@ -57,10 +57,10 @@ static const struct inode_operations uniquefs_file_inode_operations = {
 
 static ssize_t uniquefs_read(struct file *file, char __user *to, size_t size, loff_t *offset){
 	struct file_data* file_data = file->f_inode->i_private;
-	size_t copied, buf_size;
+	ssize_t copied, buf_size;
 
 	inode_lock(file->f_inode);
-	buf_size  = file_data->used - *offset;
+	buf_size  = file->f_inode->i_size - *offset;
 	if (size > buf_size){
 		size = buf_size;
 	}
@@ -72,20 +72,20 @@ static ssize_t uniquefs_read(struct file *file, char __user *to, size_t size, lo
 
 static ssize_t uniquefs_write(struct file *file, const char __user *from, size_t  size, loff_t *offset){
 	struct file_data* file_data = file->f_inode->i_private;
-	size_t copied, buf_max_size;
+	ssize_t copied, buf_max_size;
 
 	inode_lock(file->f_inode);
 	buf_max_size  = file_data->size - *offset;
 	if (size > buf_max_size){
-		if (!grow(file_data, size + *offset)){
+		if (!grow(file_data, size + *offset, file->f_inode->i_size)){
 			inode_unlock(file->f_inode);
 			return -ENOMEM;
 		}
 	}
 	copied = size - copy_from_user(file_data->data + *offset, from, size);
 	*offset += copied;
-	if(file_data->used < *offset){
-		file_data->used = *offset;
+	if(file->f_inode->i_size < *offset){
+		file->f_inode->i_size = *offset;
 	}
 	inode_unlock(file->f_inode);
 	return copied;
@@ -122,7 +122,7 @@ struct inode *uniquefs_get_inode(struct super_block *sb,
 				return NULL;
 			}
 			tmp = inode->i_private;
-			tmp->used = 0;
+			inode->i_size = 0; // probably already done somewhere else
 			tmp->size = PAGE_CACHE_SIZE;
 			tmp->data = vmalloc(tmp->size);
 			if (inode->i_private == NULL){
@@ -134,7 +134,7 @@ struct inode *uniquefs_get_inode(struct super_block *sb,
 		case S_IFDIR:
 			inode->i_op = &uniquefs_dir_inode_operations;
 			inode->i_fop = &simple_dir_operations; //Generic dir
-			inode->i_private = 0;
+			inode->i_private = (void*) 0;
 			break;
 		}
 	}
@@ -201,6 +201,7 @@ int uniquefs_fill_super(struct super_block *sb, void *data, int silent)
 {
 	struct inode *inode;
 
+	sb->s_maxbytes = MAX_LFS_FILESIZE;
 	sb->s_blocksize = PAGE_CACHE_SIZE;
 	sb->s_blocksize_bits = PAGE_CACHE_SHIFT;
 	sb->s_magic = UNIQUEFS_MAGIC;
